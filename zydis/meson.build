@@ -13,7 +13,7 @@ project(
 
 datadir = get_option('datadir')
 
-root = not meson.is_subproject()
+root = false
 
 minimal = get_option('minimal')
 decoder = get_option('decoder')
@@ -144,6 +144,7 @@ hdrs_common = files(
   'include/Zydis/Status.h',
   'include/Zydis/Utils.h',
   'include/Zydis/Zydis.h',
+  'include/Zydis/Wrapper.h'
 )
 
 hdrs_internal = files(
@@ -226,7 +227,7 @@ if host_machine.system() == 'windows'
 endif
 
 zydis_lib = library(
-  'Zydis',
+  'Zydis2',
   src + hdrs,
   c_static_args: ['-DZYDIS_STATIC_BUILD'],
   c_shared_args: ['-DZYDIS_SHOULD_EXPORT'],
@@ -234,7 +235,7 @@ zydis_lib = library(
   implicit_include_directories: false,
   dependencies: [zycore_dep],
   version: meson.project_version(),
-  install: true,
+  install: false,
 )
 
 install_headers(hdrs_common, subdir: 'Zydis')

@@ -1464,6 +1464,7 @@ static void ZydisDecodeOperandImplicitRegister(const ZydisDecoder* decoder,
     switch (definition->op.reg.type)
     {
     case ZYDIS_IMPLREG_TYPE_STATIC:
+
         operand->reg.value = definition->op.reg.reg.reg;
         break;
     case ZYDIS_IMPLREG_TYPE_GPR_OSZ:
@@ -1604,7 +1605,7 @@ static ZyanStatus ZydisDecodeOperands(const ZydisDecoder* decoder, const ZydisDe
     const ZydisOperandDefinition* operand = ZydisGetOperandDefinitions(definition);
 
     ZYAN_MEMSET(operands, 0, sizeof(ZydisDecodedOperand) * operand_count);
-
+    
     ZyanU8 imm_id = 0;
     for (ZyanU8 i = 0; i < operand_count; ++i)
     {
@@ -1856,7 +1857,6 @@ static ZyanStatus ZydisDecodeOperands(const ZydisDecoder* decoder, const ZydisDe
 
             goto FinalizeOperand;
         }
-
         // Immediate operands
         switch (operand->type)
         {

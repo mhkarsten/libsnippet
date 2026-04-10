@@ -60,87 +60,6 @@
 /* ============================================================================================== */
 
 /**
- * Usage of `REX.W` prefix makes it impossible to use some byte-sized registers. Values of this
- * enum are used to track and facilitate enforcement of these restrictions.
- */
-typedef enum ZydisEncoderRexType_
-{
-    ZYDIS_REX_TYPE_UNKNOWN,
-    ZYDIS_REX_TYPE_REQUIRED,
-    ZYDIS_REX_TYPE_FORBIDDEN,
-
-    /**
-     * Maximum value of this enum.
-     */
-    ZYDIS_REX_TYPE_MAX_VALUE = ZYDIS_REX_TYPE_FORBIDDEN,
-    /**
-     * The minimum number of bits required to represent all values of this enum.
-     */
-    ZYDIS_REX_TYPE_REQUIRED_BITS = ZYAN_BITS_TO_REPRESENT(ZYDIS_REX_TYPE_MAX_VALUE)
-} ZydisEncoderRexType;
-
-/**
- * Primary structure used during instruction matching phase. Once filled it contains information
- * about matched instruction definition and some values deduced from encoder request. It gets
- * converted to `ZydisEncoderInstruction` during instruction building phase.
- */
-typedef struct ZydisEncoderInstructionMatch_
-{
-    /**
-     * A pointer to the `ZydisEncoderRequest` instance.
-     */
-    const ZydisEncoderRequest *request;
-    /**
-     * A pointer to the `ZydisEncodableInstruction` instance.
-     */
-    const ZydisEncodableInstruction *definition;
-    /**
-     * A pointer to the `ZydisInstructionDefinition` instance.
-     */
-    const ZydisInstructionDefinition *base_definition;
-    /**
-     * A pointer to the `ZydisOperandDefinition` array.
-     */
-    const ZydisOperandDefinition *operands;
-    /**
-     * Encodable attributes for this instruction.
-     */
-    ZydisInstructionAttributes attributes;
-    /**
-     * Effective operand size attribute.
-     */
-    ZyanU8 eosz;
-    /**
-     * Effective address size attribute.
-     */
-    ZyanU8 easz;
-    /**
-     * Effective displacement size.
-     */
-    ZyanU8 disp_size;
-    /**
-     * Effective immediate size.
-     */
-    ZyanU8 imm_size;
-    /**
-     * Exponent of compressed displacement scale factor (2^cd8_scale)
-     */
-    ZyanU8 cd8_scale;
-    /**
-     * `REX` prefix constraints.
-     */
-    ZydisEncoderRexType rex_type;
-    /**
-     * True for special cases where operand size attribute must be lower than 64 bits.
-     */
-    ZyanBool eosz64_forbidden;
-    /**
-     * True when instruction definition has relative operand (used for branching instructions).
-     */
-    ZyanBool has_rel_operand;
-} ZydisEncoderInstructionMatch;
-
-/**
  * Encapsulates information about writable buffer.
  */
 typedef struct ZydisEncoderBuffer_
@@ -276,6 +195,7 @@ static ZydisEncodableEncoding ZydisGetEncodableEncoding(ZydisInstructionEncoding
     ZYAN_ASSERT((ZyanUSize)encoding <= ZYDIS_INSTRUCTION_ENCODING_MAX_VALUE);
     return encoding_lookup[encoding];
 }
+ZydisEncodableEncoding _ZydisGetEncodableEncoding(ZydisInstructionEncoding encoding) { return ZydisGetEncodableEncoding(encoding); }
 
 /**
  * Converts `ZydisMachineMode` to default stack width value expressed in bits.
@@ -298,6 +218,7 @@ static ZyanU8 ZydisGetMachineModeWidth(ZydisMachineMode machine_mode)
     };
     return lookup[machine_mode];
 }
+ZyanU8 _ZydisGetMachineModeWidth(ZydisMachineMode machine_mode) { return ZydisGetMachineModeWidth(machine_mode); }
 
 /**
  * Converts `ZydisAddressSizeHint` to address size expressed in bits.
@@ -403,7 +324,7 @@ static ZyanU8 ZydisGetOperandSizeFromElementSize(ZydisEncoderInstructionMatch *m
             }
         }
     }
-
+    
     return 0;
 }
 
@@ -453,6 +374,10 @@ static ZyanU8 ZydisGetSignedImmSize(ZyanI64 imm)
     }
 
     return 64;
+}
+ZyanU8 _ZydisGetSignedImmSize(ZyanI64 imm) 
+{
+    return ZydisGetSignedImmSize(imm);
 }
 
 /**
@@ -652,7 +577,7 @@ static ZyanU8 ZydisGetEffectiveImmSize(ZydisEncoderInstructionMatch *match, Zyan
     default:
         ZYAN_UNREACHABLE;
     }
-
+    
     return eisz >= min_size ? eisz : 0;
 }
 
@@ -1710,6 +1635,7 @@ static ZyanBool ZydisIsMemoryOperandCompatible(ZydisEncoderInstructionMatch *mat
                                 allowed_mem_size = 64;
                                 element_size = 4;
                                 break;
+
                             case ZYDIS_MVEX_FUNC_SF_64:
                             case ZYDIS_MVEX_FUNC_UF_64:
                             case ZYDIS_MVEX_FUNC_DF_64:
@@ -1915,6 +1841,7 @@ static ZyanBool ZydisIsMemoryOperandCompatible(ZydisEncoderInstructionMatch *mat
                 return ZYAN_FALSE;
             }
         }
+
         if (reg_index_class != ZYDIS_REGCLASS_INVALID &&
             user_op->mem.scale == 0 &&
             def_op->type != ZYDIS_SEMANTIC_OPTYPE_MIB)
@@ -2696,9 +2623,11 @@ static ZyanBool ZydisIsDefinitionCompatible(ZydisEncoderInstructionMatch *match,
         {
         case ZYDIS_OPERAND_TYPE_REGISTER:
             is_compatible = ZydisIsRegisterOperandCompatible(match, user_op, def_op);
+            //printf("Reg compatible %d\n", is_compatible);
             break;
         case ZYDIS_OPERAND_TYPE_MEMORY:
             is_compatible = ZydisIsMemoryOperandCompatible(match, user_op, def_op);
+            //printf("Mem compatible %d\n", is_compatible);
             break;
         case ZYDIS_OPERAND_TYPE_POINTER:
             is_compatible = ZydisIsPointerOperandCompatible(match, user_op);
@@ -2765,12 +2694,11 @@ static ZyanBool ZydisIsDefinitionCompatible(ZydisEncoderInstructionMatch *match,
             match->eosz = eosz;
         }
     }
-
     if (!ZydisCheckConstraints(match))
     {
         return ZYAN_FALSE;
     }
-
+    
     return ZYAN_TRUE;
 }
 
@@ -2932,7 +2860,7 @@ static ZyanBool ZydisHandleSwappableDefinition(ZydisEncoderInstructionMatch *mat
  *
  * @return  A zyan status code.
  */
-static ZyanStatus ZydisFindMatchingDefinition(const ZydisEncoderRequest *request,
+ZyanStatus ZydisFindMatchingDefinition(const ZydisEncoderRequest *request,
     ZydisEncoderInstructionMatch *match)
 {
     ZYAN_MEMSET(match, 0, sizeof(ZydisEncoderInstructionMatch));
@@ -2959,6 +2887,7 @@ static ZyanStatus ZydisFindMatchingDefinition(const ZydisEncoderRequest *request
         const ZydisInstructionDefinition *base_definition = ZYAN_NULL;
         ZydisGetInstructionDefinition(definition->encoding, definition->instruction_reference,
             &base_definition);
+        //printf("+ Attempting to match definition %d for %s\n",  i, ZydisMnemonicGetString(base_definition->mnemonic));
         if (!(definition->modes & mode_width))
         {
             continue;
@@ -3004,7 +2933,7 @@ static ZyanStatus ZydisFindMatchingDefinition(const ZydisEncoderRequest *request
         {
             continue;
         }
-
+        
         match->definition = definition;
         match->base_definition = base_definition;
         match->operands = ZYAN_NULL;
@@ -4229,6 +4158,8 @@ static ZyanStatus ZydisEncoderCheckRequestSanity(const ZydisEncoderRequest *requ
         return ZYAN_STATUS_INVALID_ARGUMENT;
     }
 
+
+
     static const ZyanBool branch_lookup
         [ZYDIS_BRANCH_WIDTH_MAX_VALUE + 1][ZYDIS_BRANCH_TYPE_MAX_VALUE + 1] =
     {
@@ -4259,7 +4190,7 @@ static ZyanStatus ZydisEncoderCheckRequestSanity(const ZydisEncoderRequest *requ
             return ZYAN_STATUS_INVALID_ARGUMENT;
         }
     }
-
+    
     for (ZyanU8 i = 0; i < request->operand_count; ++i)
     {
         const ZydisEncoderOperand *op = &request->operands[i];
@@ -4292,7 +4223,7 @@ static ZyanStatus ZydisEncoderCheckRequestSanity(const ZydisEncoderRequest *requ
             return ZYAN_STATUS_INVALID_ARGUMENT;
         }
     }
-
+    
     return ZYAN_STATUS_SUCCESS;
 }
 
@@ -4312,6 +4243,7 @@ static ZyanStatus ZydisEncoderEncodeInstructionInternal(const ZydisEncoderReques
     void *buffer, ZyanUSize *length, ZydisEncoderInstruction *instruction)
 {
     ZydisEncoderInstructionMatch match;
+
     ZYAN_CHECK(ZydisFindMatchingDefinition(request, &match));
     ZydisEncoderBuffer output;
     output.buffer = (ZyanU8 *)buffer;

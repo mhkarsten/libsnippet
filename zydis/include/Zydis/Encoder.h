@@ -38,6 +38,8 @@
 #include <Zydis/DecoderTypes.h>
 #include <Zydis/Mnemonic.h>
 #include <Zydis/Status.h>
+#include <Zydis/Internal/EncoderData.h>
+#include <Zydis/Internal/SharedData.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -177,6 +179,26 @@ typedef enum ZydisOperandSizeHint_
     ZYDIS_OPERAND_SIZE_HINT_REQUIRED_BITS =
         ZYAN_BITS_TO_REPRESENT(ZYDIS_OPERAND_SIZE_HINT_MAX_VALUE)
 } ZydisOperandSizeHint;
+
+/**
+ * Usage of `REX.W` prefix makes it impossible to use some byte-sized registers. Values of this
+ * enum are used to track and facilitate enforcement of these restrictions.
+ */
+typedef enum ZydisEncoderRexType_
+{
+    ZYDIS_REX_TYPE_UNKNOWN,
+    ZYDIS_REX_TYPE_REQUIRED,
+    ZYDIS_REX_TYPE_FORBIDDEN,
+
+    /**
+     * Maximum value of this enum.
+     */
+    ZYDIS_REX_TYPE_MAX_VALUE = ZYDIS_REX_TYPE_FORBIDDEN,
+    /**
+     * The minimum number of bits required to represent all values of this enum.
+     */
+    ZYDIS_REX_TYPE_REQUIRED_BITS = ZYAN_BITS_TO_REPRESENT(ZYDIS_REX_TYPE_MAX_VALUE)
+} ZydisEncoderRexType;
 
 /**
  * Describes explicit or implicit instruction operand.
@@ -388,6 +410,67 @@ typedef struct ZydisEncoderRequest_
     } mvex;
 } ZydisEncoderRequest;
 
+/**
+ * Primary structure used during instruction matching phase. Once filled it contains information
+ * about matched instruction definition and some values deduced from encoder request. It gets
+ * converted to `ZydisEncoderInstruction` during instruction building phase.
+ */
+typedef struct ZydisEncoderInstructionMatch_
+{
+    /**
+     * A pointer to the `ZydisEncoderRequest` instance.
+     */
+    const ZydisEncoderRequest *request;
+    /**
+     * A pointer to the `ZydisEncodableInstruction` instance.
+     */
+    const ZydisEncodableInstruction *definition;
+    /**
+     * A pointer to the `ZydisInstructionDefinition` instance.
+     */
+    const ZydisInstructionDefinition *base_definition;
+    /**
+     * A pointer to the `ZydisOperandDefinition` array.
+     */
+    const ZydisOperandDefinition *operands;
+    /**
+     * Encodable attributes for this instruction.
+     */
+    ZydisInstructionAttributes attributes;
+    /**
+     * Effective operand size attribute.
+     */
+    ZyanU8 eosz;
+    /**
+     * Effective address size attribute.
+     */
+    ZyanU8 easz;
+    /**
+     * Effective displacement size.
+     */
+    ZyanU8 disp_size;
+    /**
+     * Effective immediate size.
+     */
+    ZyanU8 imm_size;
+    /**
+     * Exponent of compressed displacement scale factor (2^cd8_scale)
+     */
+    ZyanU8 cd8_scale;
+    /**
+     * `REX` prefix constraints.
+     */
+    ZydisEncoderRexType rex_type;
+    /**
+     * True for special cases where operand size attribute must be lower than 64 bits.
+     */
+    ZyanBool eosz64_forbidden;
+    /**
+     * True when instruction definition has relative operand (used for branching instructions).
+     */
+    ZyanBool has_rel_operand;
+} ZydisEncoderInstructionMatch;
+
 /* ============================================================================================== */
 /* Exported functions                                                                             */
 /* ============================================================================================== */
@@ -397,6 +480,17 @@ typedef struct ZydisEncoderRequest_
  * Functions allowing encoding of instruction bytes from a machine interpretable struct.
  * @{
  */
+
+/**
+ * This function attempts to find a matching instruction definition for provided encoder request.
+ *
+ * @param   request     A pointer to `ZydisEncoderRequest` struct.
+ * @param   match       A pointer to `ZydisEncoderInstructionMatch` struct.
+ *
+ * @return  A zyan status code.
+ */
+ZYDIS_EXPORT ZyanStatus ZydisFindMatchingDefinition(const ZydisEncoderRequest *request,
+    ZydisEncoderInstructionMatch *match);
 
 /**
  * Encodes instruction with semantics specified in encoder request structure.

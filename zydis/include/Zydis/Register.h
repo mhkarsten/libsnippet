@@ -37,6 +37,7 @@
 #include <Zydis/Defines.h>
 #include <Zydis/SharedTypes.h>
 #include <Zydis/ShortString.h>
+#include <Zycore/Status.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -219,6 +220,29 @@ typedef struct ZydisRegisterContext_
     ZyanU64 values[ZYDIS_REGISTER_MAX_VALUE + 1];
 } ZydisRegisterContext;
 
+/**
+ * Defines the `ZydisRegisterClassLookupItem` struct.
+ */
+typedef struct ZydisRegisterClassLookupItem_
+{
+    /**
+     * The lowest register of the current class.
+     */
+    ZydisRegister lo;
+    /**
+     * The highest register of the current class.
+     */
+    ZydisRegister hi;
+    /**
+     * The width of registers of the current class in 16- and 32-bit mode.
+     */
+    ZydisRegisterWidth width;
+    /**
+     * The width of registers of the current class in 64-bit mode.
+     */
+    ZydisRegisterWidth width64;
+} ZydisRegisterClassLookupItem;
+
 /* ---------------------------------------------------------------------------------------------- */
 
 /* ============================================================================================== */
@@ -245,6 +269,15 @@ typedef struct ZydisRegisterContext_
  *          if an invalid parameter was passed.
  */
 ZYDIS_EXPORT ZydisRegister ZydisRegisterEncode(ZydisRegisterClass register_class, ZyanU8 id);
+
+/**
+ * Returns the register-class-lookup-item of the specified register class.
+ *
+ * @param   register_class The register class.
+ *
+ * @return  The register-class-lookup-item of the specified register class.
+ */
+ZYDIS_EXPORT ZyanStatus ZydisRegisterGetClassLookupItem(ZydisRegisterClass register_class, ZydisRegisterClassLookupItem *item);
 
 /**
  * Returns the id of the specified register.

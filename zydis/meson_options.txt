@@ -50,7 +50,7 @@ option(
 option(
   'tools',
   type: 'feature',
-  value: 'auto',
+  value: 'enabled',
   description: 'Build tools',
 )
 option(

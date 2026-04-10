@@ -25,6 +25,8 @@
 ***************************************************************************************************/
 
 #include <Zydis/Register.h>
+#include <Zycore/Status.h>
+#include <stdio.h>
 
 /* ============================================================================================== */
 /* Register strings                                                                               */
@@ -61,28 +63,7 @@ typedef struct ZydisRegisterLookupItem
 
 #include <Generated/RegisterLookup.inc>
 
-/**
- * Defines the `ZydisRegisterClassLookupItem` struct.
- */
-typedef struct ZydisRegisterClassLookupItem_
-{
-    /**
-     * The lowest register of the current class.
-     */
-    ZydisRegister lo;
-    /**
-     * The highest register of the current class.
-     */
-    ZydisRegister hi;
-    /**
-     * The width of registers of the current class in 16- and 32-bit mode.
-     */
-    ZydisRegisterWidth width;
-    /**
-     * The width of registers of the current class in 64-bit mode.
-     */
-    ZydisRegisterWidth width64;
-} ZydisRegisterClassLookupItem;
+
 
 #include <Generated/RegisterClassLookup.inc>
 
@@ -107,14 +88,33 @@ ZydisRegister ZydisRegisterEncode(ZydisRegisterClass register_class, ZyanU8 id)
     {
         return ZYDIS_REGISTER_NONE;
     }
-
+    
     const ZydisRegisterClassLookupItem* item = &REG_CLASS_LOOKUP[register_class];
     if (id <= (item->hi - item->lo))
     {
         return item->lo + id;
     }
-
+    
     return ZYDIS_REGISTER_NONE;
+}
+
+ZyanStatus ZydisRegisterGetClassLookupItem(ZydisRegisterClass register_class, ZydisRegisterClassLookupItem *item)
+{
+    if ((register_class == ZYDIS_REGCLASS_INVALID) ||
+        (register_class == ZYDIS_REGCLASS_FLAGS) ||
+        (register_class == ZYDIS_REGCLASS_IP))
+    {
+        return ZYAN_STATUS_FAILED;
+    }
+
+    if ((ZyanUSize)register_class >= ZYAN_ARRAY_LENGTH(REG_CLASS_LOOKUP))
+    {
+        return ZYAN_STATUS_FAILED;
+    }
+    
+    *item = REG_CLASS_LOOKUP[register_class];
+
+    return ZYAN_STATUS_SUCCESS;
 }
 
 ZyanI8 ZydisRegisterGetId(ZydisRegister reg)

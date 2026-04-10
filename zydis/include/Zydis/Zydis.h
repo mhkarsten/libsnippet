@@ -62,6 +62,7 @@
 #include <Zydis/SharedTypes.h>
 #include <Zydis/Status.h>
 #include <Zydis/Utils.h>
+#include <Zydis/Wrapper.h>
 
 #ifdef __cplusplus
 extern "C" {
