@@ -3,46 +3,8 @@
 #include <Zydis/Internal/SharedData.h>
 #include <Zydis/Internal/EncoderData.h>
 
-#include "xstate.h"
 #include "config.h" // A bit circular here, but needed to keep the strings in one place
 #include "debug_strings.h"
-
-const char *fuzz_method_strings[] = {
-    [FUZZ_GENERATIVE]   = "Generative Fuzzing",
-    [FUZZ_MUTATIVE]     = "Mutative Fuzzing",
-    [FUZZ_HYBRID]       = "Hybrid Fuzzing"
-};
-
-const char *encode_method_strings[] = {
-    [NORM_64_BYTE] = "Normalize every 8 bytes",
-    [NORM_32_BYTE] = "Normalize every 4 bytes",
-    [NORM_16_BYTE] = "Normalize every 2 bytes",
-    [NORM_8_BYTE] = "Normalize every 1 bytes",
-    [NORM_DIRECT]   = "Normalize every register"
-};
-
-const char *xfeature_strings[] = {
-    [XFEATURE_FP] = "XFEATURE_FP",
-    [XFEATURE_SSE] = "XFEATURE_SSE",
-    [XFEATURE_YMM] = "XFEATURE_YMM",
-    [XFEATURE_BNDREGS] = "XFEATURE_BNDREGS",
-    [XFEATURE_BNDCSR] = "XFEATURE_BNDCSR",
-    [XFEATURE_OPMASK] = "XFEATURE_OPMASK",
-    [XFEATURE_ZMM_Hi256] = "XFEATURE_ZMM_Hi256",
-    [XFEATURE_Hi16_ZMM] = "XFEATURE_Hi16_ZMM",
-    [XFEATURE_PT_UNIMPLEMENTED_SO_FAR] = "XFEATURE_PT_UNIMPLEMENTED_SO_FAR",
-    [XFEATURE_PKRU] = "XFEATURE_PKRU",
-    [XFEATURE_PASID] = "XFEATURE_PASID",
-    [XFEATURE_CET_USER] = "XFEATURE_CET_USER",
-    [XFEATURE_CET_KERNEL] = "XFEATURE_CET_KERNEL",
-    [XFEATURE_RSRVD_COMP_13] = "XFEATURE_RSRVD_COMP_13",
-    [XFEATURE_RSRVD_COMP_14] = "XFEATURE_RSRVD_COMP_14",
-    [XFEATURE_LBR] = "XFEATURE_LBR",
-    [XFEATURE_RSRVD_COMP_16] = "XFEATURE_RSRVD_COMP_16",
-    [XFEATURE_XTILE_CFG] = "XFEATURE_XTILE_CFG",
-    [XFEATURE_XTILE_DATA] = "XFEATURE_XTILE_DATA",
-    [XFEATURE_APX] = "XFEATURE_APX",
-};
 
 const char *zydis_machine_mode_strings[] = {
     [ZYDIS_MACHINE_MODE_LEGACY_16] = "ZYDIS_MACHINE_MODE_LEGACY_16",

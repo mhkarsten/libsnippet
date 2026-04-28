@@ -3,11 +3,11 @@ from pycparser import c_ast, parse_file, c_generator, preprocess_file, c_parser
 import pycparser_fake_libc
 from glob import glob
 import os
+import subprocess
 import re
 
 PKG_DIR = "src"
-BUILD_DIR = "libsnippet"
-PAPI_DIR = os.getenv("PAPI_DIR", "usr")
+BUILD_DIR = "build"
 
 def find_first(text, names):
     text = text.split("\n")
@@ -182,36 +182,32 @@ def cffi_build(builder):
                   #include "config.h"
                   #include "arena.h"
                   #include "debug_strings.h"
-                  #include "score.h"
                   
                   """,
-                  sources=[os.path.relpath(f"{PKG_DIR}/config.c", BUILD_DIR),
-                           os.path.relpath(f"{PKG_DIR}/pipeline.c", BUILD_DIR),
+                  sources=[os.path.relpath(f"{PKG_DIR}/pipeline.c", BUILD_DIR),
                            os.path.relpath(f"{PKG_DIR}/snippet.c", BUILD_DIR),
                            os.path.relpath(f"{PKG_DIR}/debug_strings.c", BUILD_DIR),
                            os.path.relpath(f"{PKG_DIR}/arena.c", BUILD_DIR),
-                           os.path.relpath(f"{PKG_DIR}/generate.c", BUILD_DIR),
-                           os.path.relpath(f"{PKG_DIR}/score.c", BUILD_DIR),
-                           os.path.relpath(f"{PKG_DIR}/bloom.c", BUILD_DIR)],
+                           os.path.relpath(f"{PKG_DIR}/generate.c", BUILD_DIR)],
                   libraries=["c"],
                   library_dirs=[os.path.abspath("zydis/builddir")],
                   extra_compile_args=[
                       "-DDEBUG", 
                       "-g",
                       "-D_GNU_SOURCE",
+                      "-DZYDIS_STATIC_BUILD"
                       "-mxsave",
                       f"-I{os.path.abspath('include')}", 
-                      f"-I{os.path.abspath('zydis/include')}",
-                      f"-I/{PAPI_DIR}/include"],
-                  extra_link_args=[f"-L/{PAPI_DIR}/lib", "-lpapi", "-lxxhash", os.path.abspath("zydis/builddir/libZydis2.so"), f"-Wl,-rpath,{os.path.abspath('zydis/builddir')}"])
+                      f"-I{os.path.abspath('zydis/include')}"],
+                  extra_link_args=[os.path.abspath("zydis/builddir/libZydis2.a"), f"-Wl,-rpath,{os.path.abspath('zydis/builddir')}"])
 
     builder.compile(tmpdir=BUILD_DIR, verbose=True)
 
     # Move .o files to the appropriate location afterwards
-    os.system("mv src/*.o libsnippet/*.o obj")
+    subprocess.run(f"mv src/*.o {BUILD_DIR}/obj", shell=True)
 
-if not glob(os.path.join(BUILD_DIR, "*.so")):
-    os.system("make zydis")
+if not glob(os.path.join(BUILD_DIR, "_libsnippet.so")):
+    subprocess.run("make zydis", shell=True)
     ffibuilder = FFI()
     cffi_build(ffibuilder)
 else:

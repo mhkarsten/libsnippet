@@ -947,7 +947,7 @@ int create_random_instruction(config *cfg, instruction_t *ins)
         
         //printf("Random bytes 0x%llx 0x%llx\n", ((uint64_t *)buf)[0], ((uint64_t *)buf)[1]);
         
-        status_dec = ZydisDisassembleIntel(cfg->mode, CFG_SNIPPET_CODE_ADDR, buf, 16, &ins_buf);
+        status_dec = ZydisDisassembleIntel(cfg->mode, CODE_ADDR, buf, 16, &ins_buf);
 
         status_enc = ZydisEncoderDecodedInstructionToEncoderRequest(
                     &ins_buf.info,

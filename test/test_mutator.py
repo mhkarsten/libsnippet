@@ -6,6 +6,7 @@ import random
 import capstone
 import time
 
+
 class TestInstructions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

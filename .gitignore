@@ -1,7 +1,9 @@
 # Custom ignores
 build/
-compile-commands.json
-
+compile_commands.json
+zydis_cdefs_ref.h
+zydis/dependencies/*
+zydis/subprojects/*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
