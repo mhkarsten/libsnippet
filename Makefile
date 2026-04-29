@@ -1,4 +1,4 @@
-.PHONY: depend clean zydis python
+.PHONY: depend clean zydis python libsnippet
 
 # Universal compilation components
 CC = clang
@@ -25,7 +25,7 @@ LDFLAGS = -lm -lpthread 							\
 # Custom cflags for each target
 libsnippet_CFLAGS := -UNDEBUG -DDEBUG
 
-all: $(LIB_DIR)/libsnippet.so
+all: $(LIB_DIR)/libsnippet.so python
 
 # Compile C files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(HEADS)
@@ -59,13 +59,14 @@ $(LIB_DIR)/libsnippet.so: zydis $(OBJS)
 python: $(LIB_DIR)/libsnippet.so
 	python build_library.py
 
+libsnippet: $(LIB_DIR)/libsnippet.so python
+
 depend:
 	$(CXX) $(INCLUDES) -MM $(SRCS) > $(DEPS)
 	@sed -i -E "s/^(.+?).o: ([^ ]+?)\1/\2\1.o: \2\1/g" $(DEPS)
 
 clean:
-	rm -f $(OBJ_DIR)/*.o
-	rm -rf
+	rm -rf $(LIB_DIR)
 	rm -rf zydis/builddir
 	rm -rf _libsnippet*
 	rm -f zydis_cdef_ref.h

@@ -204,7 +204,7 @@ def cffi_build(builder):
     builder.compile(tmpdir=BUILD_DIR, verbose=True)
 
     # Move .o files to the appropriate location afterwards
-    subprocess.run(f"mv src/*.o {BUILD_DIR}/obj", shell=True)
+    subprocess.run(f"mv src/*.o {BUILD_DIR}/*.o {BUILD_DIR}/obj", shell=True)
 
 if not glob(os.path.join(BUILD_DIR, "_libsnippet.so")):
     subprocess.run("make zydis", shell=True)
