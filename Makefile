@@ -10,7 +10,7 @@ DEPS = Makefile.depend
 SRCS := $(wildcard $(SRC_DIR)/*)
 OBJS := $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 HEADS = $(shell find ./include -type f -name *.h)
-ZYDIS_STATIC_LIBS := $(shell find zydis/builddir -name '*.a')
+ZYDIS_STATIC_LIBS = $(shell find ./zydis/builddir -type f -name '*.a')
 
 INCLUDES = -I./include -I./zydis/include
 
@@ -19,13 +19,14 @@ CFLAGS = -g -O3 -Wall -fPIC -mxsave $(INCLUDES) -D_GNU_SOURCE -DZYDIS_STATIC_BUI
 LDFLAGS = -lm -lpthread 							\
 		  -Wl,--whole-archive $(ZYDIS_STATIC_LIBS) 	\
 		  -Wl,--no-whole-archive 					\
-		  -Wl,-rpath,$$ORIGIN
+		  -Wl,-rpath,$$ORIGIN						\
+		  -Wl,--verbose
 
 # TODO: Add flag for test vs production
 # Custom cflags for each target
 libsnippet_CFLAGS := -UNDEBUG -DDEBUG
 
-all: $(LIB_DIR)/libsnippet.so python
+all: $(LIB_DIR)/libsnippet.so
 
 # Compile C files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(HEADS)
@@ -36,9 +37,6 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(HEADS)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.S $(HEADS)
 	@mkdir -p $(dir $@)
 	$(CC) $(INCLUDES) -fPIC -c $< -o $@
-
-# @echo "SNIPPET_INCLUDES := -I$(abspath ./include) -I$(abspath ./zydis/include) -I$(abspath ./zydis/dependencies/zycore/include) -DZYDIS_STATIC_BUILD" >> $@
-# @echo "SNIPPET_LDFLAGS  := -L$(abspath ./build) -lsnippet -Wl,-rpath,$(abspath ./build)" >> $@
 
 zydis:
 	meson setup 					\
@@ -59,7 +57,7 @@ $(LIB_DIR)/libsnippet.so: zydis $(OBJS)
 python: $(LIB_DIR)/libsnippet.so
 	python build_library.py
 
-libsnippet: $(LIB_DIR)/libsnippet.so python
+libsnippet: $(LIB_DIR)/libsnippet.so
 
 depend:
 	$(CXX) $(INCLUDES) -MM $(SRCS) > $(DEPS)
