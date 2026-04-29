@@ -9,9 +9,9 @@
 #include <Zydis/Internal/EncoderData.h>
 #include <Zydis/Internal/FormatterBase.h>
 
-#include "config.h"
-#include "list.h"
-#include "arena.h"
+#include "libsnippet/config.h"
+#include "libsnippet/list.h"
+#include "libsnippet/arena.h"
 
 // Needed for debug prints
 #define PRINT_BUF_SZ    PAGE_SIZE  // Maximum size for a program to be printed as a string

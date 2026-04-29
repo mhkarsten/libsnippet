@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <Zydis/Wrapper.h>
 
-#include "snippet.h"
+#include "libsnippet/snippet.h"
 
 #define JMP_START(a, b) ({__typeof__(a) _a = (a); \
                         __typeof__(b) _b = (b); \

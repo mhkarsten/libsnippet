@@ -4,10 +4,10 @@
 #include <string.h>
 #include <sys/mman.h>
 
-#include "arena.h"
-#include "list.h"
-#include "common.h"
-#include "error.h"
+#include "libsnippet/arena.h"
+#include "libsnippet/list.h"
+#include "libsnippet/common.h"
+#include "libsnippet/error.h"
 
 arena_t *arena_init(size_t block_size, size_t n)
 {

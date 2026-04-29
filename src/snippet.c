@@ -8,12 +8,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "config.h"
-#include "error.h"
-#include "list.h"
-#include "debug_strings.h"
-#include "snippet.h"
-#include "arena.h"
+#include "libsnippet/config.h"
+#include "libsnippet/error.h"
+#include "libsnippet/list.h"
+#include "libsnippet/debug_strings.h"
+#include "libsnippet/snippet.h"
+#include "libsnippet/arena.h"
 
 void test_list(snippet_t *snip)
 {

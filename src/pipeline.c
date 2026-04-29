@@ -18,12 +18,12 @@
 
 #include "Zydis/DecoderTypes.h"
 
-#include "snippet.h"
-#include "common.h"
-#include "list.h"
-#include "error.h"
-#include "arena.h"
-#include "pipeline.h"
+#include "libsnippet/snippet.h"
+#include "libsnippet/common.h"
+#include "libsnippet/list.h"
+#include "libsnippet/error.h"
+#include "libsnippet/arena.h"
+#include "libsnippet/pipeline.h"
 
 typedef struct bb_ctx_ {
     basic_block_t *bb;

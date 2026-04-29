@@ -7,7 +7,7 @@
 
 #include <Zydis/Zydis.h>
 
-#include "common.h"
+#include "libsnippet/common.h"
 
 typedef struct mem_ {
     uint64_t address;

@@ -3,8 +3,8 @@
 #include <Zydis/Internal/SharedData.h>
 #include <Zydis/Internal/EncoderData.h>
 
-#include "config.h" // A bit circular here, but needed to keep the strings in one place
-#include "debug_strings.h"
+#include "libsnippet/config.h" // A bit circular here, but needed to keep the strings in one place
+#include "libsnippet/debug_strings.h"
 
 const char *zydis_machine_mode_strings[] = {
     [ZYDIS_MACHINE_MODE_LEGACY_16] = "ZYDIS_MACHINE_MODE_LEGACY_16",

@@ -6,10 +6,10 @@
 #include <Zydis/MetaInfo.h>
 #include <stdbool.h>
 
-#include "snippet.h"
-#include "config.h"
-#include "arena.h"
-#include "pipeline.h"
+#include "libsnippet/snippet.h"
+#include "libsnippet/config.h"
+#include "libsnippet/arena.h"
+#include "libsnippet/pipeline.h"
 
 typedef enum generate_method_ {
     METHOD_NONE,

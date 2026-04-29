@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/mman.h>
 
-#include "list.h"
+#include "libsnippet/list.h"
 
 typedef struct arena_ {
     struct arena_ *next;

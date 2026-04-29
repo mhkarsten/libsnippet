@@ -10,12 +10,12 @@
 #include <Zydis/Internal/EncoderData.h>
 #include <Zydis/Internal/FormatterBase.h>
 
-#include "error.h"
-#include "snippet.h"
-#include "config.h"
-#include "generate.h"
-#include "pipeline.h"
-#include "debug_strings.h"
+#include "libsnippet/error.h"
+#include "libsnippet/snippet.h"
+#include "libsnippet/config.h"
+#include "libsnippet/generate.h"
+#include "libsnippet/pipeline.h"
+#include "libsnippet/debug_strings.h"
 
 
 const imm_size_t imm_encoding_sizes[] = {
