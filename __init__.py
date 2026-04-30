@@ -96,12 +96,17 @@ def dump(struct):
     s = s + ")"
     return s
 
-class InstructionIndex():
-    def __init__(self, obj=None):
+class InstructionIndex:
+    def __init__(self, obj=None, ctx=None):
         if obj:
             self.obj = obj
+        elif ctx == None:
+            raise RuntimeError("Context required to generate instruction index")
         else:
-            self.obj = ffi.new("generation_index_t *")
+            self.obj = ffi.new("gen_idx_t *")
+            
+            if lib.create_index(self.obj) != 0:
+                raise RuntimeError("Could not create instruction index")
     
     @property
     def iterations(self):
@@ -118,26 +123,16 @@ class InstructionIndex():
     def get_element(self, i: int):
         return self.obj.instructions[i]
 
-class Config:
-    def __init__(self, obj=None, index_iters=None, config_file=None):
+class Context:
+    def __init__(self, obj=None, index_iters=None):
         if obj:
             self.obj = obj 
         else:
-            self.obj = ffi.new("struct config_t *")
+            self.obj = ffi.new("exec_ctx_t *")
         
-        if config_file:
-            if lib.import_config(self.obj, ffi.new("char[]", config_file.encode("utf-8"))) != 0:
-                raise RuntimeError(f"Could not import config @ {config_file}")
-        else:
-            if lib.default_config(self.obj) != 0:
-                raise RuntimeError("Could not create default config")
-        
-        if index_iters:
-            self.obj.index.iterations = index_iters
-        
-        if lib.create_index(self.obj) != 0:
-            raise RuntimeError("Could not create instruction index")
-
+            if lib.default_context(self.obj) != 0:
+                raise RuntimeError("Could not create default context")
+    
     @property
     def fuzz_type(self):
         return Fuzz_Types(self.obj.fuzz_method)
@@ -145,10 +140,6 @@ class Config:
     @property
     def norm_type(self):
         return Norm_Types(self.obj.encode_method)
-
-    @property
-    def index(self):
-        return InstructionIndex(self.obj.index)
 
 class Operand:
     def __init__(self, obj):
@@ -267,21 +258,21 @@ class Instruction:
         return Category_Types[f"ZYDIS_CATEGORY_{cat_str}"]
 
 
-    def create_random(self, cfg) -> Instruction:
-        ret = lib.create_random_instruction(cfg, self.obj)
+    def create_random(self, ctx: Context) -> Instruction:
+        ret = lib.create_random_instruction(ctx.obj, self.obj)
 
         if ret < 0:
             raise RuntimeError("Could not generate instruction")
 
         return self
 
-    def create(self, cfg: Config, mnemonic: Zydis_Mnemonics, operands: list(Op_Types)):
+    def create(self, ctx: Context, mnemonic: Zydis_Mnemonics, operands: list(Op_Types)):
         if len(operands) > 0:
             ops = ffi.new(f"ZydisEncoderOperand[{len(operands)}]", list(map(lambda x: x.value, operands)))
         else:
             ops = ffi.NULL
         
-        ret = lib.create_instruction(cfg, self.obj, mnemonic.value, ops)
+        ret = lib.create_instruction(ctx, self.obj, mnemonic.value, ops)
         if ret < 0:
             raise RuntimeError(f"Could not create instruction: {mnemonic_to_str(mnemonic.value)}")
 
@@ -293,22 +284,18 @@ class Instruction:
         return self
 
 class Snippet:
-    def __init__(self, obj=None, text=None, cfg=None):
-        self.max_len = MAX_SNIPPET_SIZE # TODO: These are pretty much included in snippet_t now
-        self.code_size = lib.CODE_SIZE
-        self.mem_size = lib.MEM_SIZE
-        self.mem_addr = lib.MEM_ADDR
+    def __init__(self, obj=None, ctx=None, text=None):
         
-        if cfg:
-            self.cfg = cfg
+        if ctx:
+            self.ctx = ctx
         else:
-            self.cfg = Config()
+            self.ctx = Context()
 
         if obj:
             self.obj = obj
         else:
             self.obj = ffi.new("struct snippet_ *")
-            lib.snippet_init(self.cfg.obj, self.obj)
+            lib.snippet_init(self.obj)
 
         # Easy contructor
         if text:
@@ -367,7 +354,7 @@ class Snippet:
         return bytearray(text)[0:ret]
     
     def mutate(self, mut_type: Mut_Types) -> Snippet:
-        ret = lib.mutate_snippet(self.cfg.obj, self.obj, mut_type.value)
+        ret = lib.mutate_snippet(self.ctx.obj, self.obj, mut_type.value)
 
         if ret < 0:
             self.print()
@@ -379,7 +366,7 @@ class Snippet:
         if gen_type == Gen_Types.METHOD_NONE:
             return self
         
-        ret = lib.create_snippet(self.cfg.obj, self.obj, len, gen_type.value)
+        ret = lib.create_snippet(self.ctx.obj, self.obj, len, gen_type.value)
 
         if ret < 0:
             raise RuntimeError("Could not mutate snippet")

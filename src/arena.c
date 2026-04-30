@@ -6,8 +6,10 @@
 
 #include "libsnippet/arena.h"
 #include "libsnippet/list.h"
-#include "libsnippet/common.h"
 #include "libsnippet/error.h"
+
+#define MMAP_PROT   PROT_READ | PROT_WRITE
+#define MMAP_OPT    MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE
 
 arena_t *arena_init(size_t block_size, size_t n)
 {

@@ -8,12 +8,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "libsnippet/config.h"
 #include "libsnippet/error.h"
 #include "libsnippet/list.h"
-#include "libsnippet/debug_strings.h"
 #include "libsnippet/snippet.h"
 #include "libsnippet/arena.h"
+#include "libsnippet/pipeline.h"
 
 void test_list(snippet_t *snip)
 {
@@ -47,26 +46,18 @@ void test_list(snippet_t *snip)
     }
 }
 
-int snippet_init(config *cfg, snippet_t *snip)
+int snippet_init(snippet_t *snip)
 {
     memset(snip, 0, sizeof(snippet_t));
 
-    snip->instructions = arena_init(sizeof(instruction_t), MAX_SNIPPET_SIZE);
+    snip->instructions = arena_init(sizeof(instruction_t), INIT_SNIPPET_SZ);
     CHECK_PTR(snip->instructions, EGENERIC);
 
-    snip->basic_blocks = arena_init(sizeof(basic_block_t), MAX_SNIPPET_SIZE);
+    snip->basic_blocks = arena_init(sizeof(basic_block_t), INIT_SNIPPET_SZ);
     
     CHECK_INT(list_init(&snip->head), EGENERIC);
     
     snip->count = 0;
-    snip->start_address = cfg->snippet_code.address;
-    snip->mem_start = cfg->snippet_memory.address;
-    snip->mem_sz = cfg->snippet_memory.size;
-    snip->index_reg = cfg->mem_index_register;
-    snip->index_xreg = cfg->mem_vsibx_register;
-    snip->index_yreg = cfg->mem_vsiby_register;
-    snip->index_zreg = cfg->mem_vsibz_register;
-    snip->base_reg = cfg->mem_base_register;
     return 0;
 }
 
@@ -138,7 +129,6 @@ int snippet_destroy(snippet_t *snip)
     CHECK_INT(list_init(&snip->head), EGENERIC);
     
     snip->count = 0;
-    snip->start_address = 0;
 
     return 0;
 }
@@ -194,93 +184,6 @@ ZydisInstructionCategory get_category(instruction_t *ins)
 
     CHECK_ZYAN(ZydisFindMatchingDefinition(&ins->req, &match));
     return match.base_definition->category;
-}
-
-int print_instruction(snippet_t *snip, instruction_t *ins, void *userdata)
-{
-    ZydisEncoderOperand *operand;
-    printf("%ld\t[%ld] %s ", ins->idx, ins->length, ZydisMnemonicGetString(ins->req.mnemonic));
-        
-    for (int op = 0; op < ins->req.operand_count; op++) {
-        operand = &ins->req.operands[op];
-        printf("%s ", zydis_operand_type_strings[operand->type]);
-        
-        switch (operand->type) {
-        case ZYDIS_OPERAND_TYPE_MEMORY:
-            printf("[");
-            if (operand->mem.base)
-                printf("%s", ZydisRegisterGetString(operand->mem.base));
-            if (operand->mem.index) {
-                if (operand->mem.base)
-                    printf(" + ");
-
-                printf("(%s * %d)", ZydisRegisterGetString(operand->mem.index), operand->mem.scale);
-            }
-            if (operand->mem.displacement) {
-                if (operand->mem.base || operand->mem.index)
-                    printf(" + ");
-
-                printf("0x%lx", operand->mem.displacement);
-            }
-            printf("] (%hu)", operand->mem.size);
-            break;
-        case ZYDIS_OPERAND_TYPE_IMMEDIATE:
-            if (is_jump(ins->req.mnemonic) && ins->jump_target)
-                printf("0x%lx (%ld)", operand->imm.s,  ins->jump_target->idx);
-            else
-                printf("0x%lx", operand->imm.u);
-            break;
-        case ZYDIS_OPERAND_TYPE_REGISTER:
-                printf("%s (is4 %d)", ZydisRegisterGetString(operand->reg.value), operand->reg.is4);
-            break;
-        default:
-            printf("UNSUPPORTED");
-            break;
-        }
-
-        if (ins->req.operand_count > 1 
-            && op != (ins->req.operand_count - 1))
-            printf(", ");
-    }
-
-    printf("\n");
-    return 0;
-}
-
-int snippet_print(snippet_t *snip, FILE *dst, bool use_zydis, bool with_address)
-{
-    if (!use_zydis)
-        return walk_instructions(snip, print_instruction, NULL);
-
-    ZyanU8 instructions[PRINT_BUF_SZ] = {0};
-    ZyanUSize offset = 0;
-    ZyanUSize address = snip->start_address;
-    ZydisDisassembledInstruction ins;
-    size_t idx = 0;
-    
-    CHECK_INT(snippet_encode(snip, instructions, PRINT_BUF_SZ), EGENERIC);
-
-    while (ZYAN_SUCCESS(ZydisDisassembleIntel(
-                    ZYDIS_MACHINE_MODE_LONG_64, 
-                    address, 
-                    instructions + offset, 
-                    PRINT_BUF_SZ - offset, 
-                    &ins
-    ))) {        
-        if (with_address)
-            CHECK_LIBC(fprintf(dst, "%016" PRIX64 "  %s\n", address, ins.text));
-        else
-            CHECK_LIBC(fprintf(dst, "%s\n", ins.text));
-
-        offset += ins.info.length;    
-        address += ins.info.length;
-        idx++;
-        
-        if (idx >= snip->count)
-            break;
-    }
-
-    return 0;
 }
 
 instruction_t *snippet_allocate(snippet_t *snip)
@@ -404,48 +307,6 @@ int snippet_swap(snippet_t *snip, size_t idx1, size_t idx2)
     return 0;
 }
 
-static int walk_basic_blocks_rec(
-        snippet_t *snip, basic_block_t *cur_bb, 
-        int (*fn)(snippet_t *, basic_block_t *, void *), 
-        void *userdata)
-{
-    if (!cur_bb)
-        return 0;
-
-    CHECK_INT(fn(snip, cur_bb, userdata), EGENERIC);
-    
-    CHECK_INT(walk_basic_blocks_rec(snip, cur_bb->next[0], fn, userdata), EGENERIC);
-
-    return walk_basic_blocks_rec(snip, cur_bb->next[1], fn, userdata);
-}
-
-int walk_basic_blocks(
-        snippet_t *snip, 
-        int (*fn)(snippet_t *, basic_block_t *, void *), 
-        void *userdata)
-{
-    if (!snip->blocks)
-        return -1;
-
-    return walk_basic_blocks_rec(snip, &snip->blocks[0], fn, userdata);
-}
-
-int walk_instructions(
-        snippet_t *snip, 
-        int (*fn)(snippet_t *, instruction_t *, void *), 
-        void *userdata) 
-{
-    list_node *temp, *pos;
-    instruction_t *ins;
-
-    list_for_each_safe(pos, temp, &snip->head) {
-        ins = container_of(pos, instruction_t, node);
-        CHECK_INT(fn(snip, ins, userdata), EGENERIC);
-    }
-    
-    return 0;
-}
-
 int snippet_encode(snippet_t *snip, ZyanU8 *buf, ZyanUSize buf_sz)
 {
     ZyanStatus status;
@@ -471,7 +332,7 @@ int snippet_encode(snippet_t *snip, ZyanU8 *buf, ZyanUSize buf_sz)
 }
 
 // The snippet is expected to be already initialized and empty here
-int snippet_decode(snippet_t *snip, ZyanU64 rt_address, const ZyanU8 *buf, ZyanUSize buf_sz)
+int snippet_decode(snippet_t *snip, uint64_t rt_address, const ZyanU8 *buf, ZyanUSize buf_sz)
 {
     ZyanUSize offset = 0;
     size_t idx = 0;
@@ -569,7 +430,7 @@ int dump_snippet(snippet_t *snip, uint8_t *bin, size_t bin_sz, char *dir_name, b
         CHECK_PTR(f, EGENERIC);
 
         CHECK_LIBC(fprintf(f, ".intel_syntax noprefix\n"));
-        CHECK_INT(snippet_print(snip, f, true, false), EGENERIC);
+        CHECK_INT(snippet_print(snip, 0, f, true), EGENERIC);
 
         fclose(f);
     }

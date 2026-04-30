@@ -10,13 +10,12 @@
 #include <Zydis/Internal/EncoderData.h>
 #include <Zydis/Internal/FormatterBase.h>
 
+#include "libsnippet/common.h"
 #include "libsnippet/error.h"
 #include "libsnippet/snippet.h"
-#include "libsnippet/config.h"
 #include "libsnippet/generate.h"
 #include "libsnippet/pipeline.h"
 #include "libsnippet/debug_strings.h"
-
 
 const imm_size_t imm_encoding_sizes[] = {
     [ZYDIS_OPERAND_ENCODING_UIMM8] = {1, {8}, false},
@@ -162,6 +161,26 @@ void print_enc_ins(const ZydisEncodableInstruction *def)
     printf("swappable %d\n", def->swappable);
 
     //printf("instruction_reference %d\n", def->instruction_reference);
+}
+
+int default_context(exec_ctx_t *ctx) 
+{
+    ctx->mode = MACHINE_MODE;
+
+    ctx->memory.address = MEM_ADDR;
+    ctx->memory.size = MEM_SIZE;
+    ctx->code.address = CODE_ADDR;
+    ctx->code.size = CODE_SIZE;
+    ctx->code.address = CODE_ADDR;
+    ctx->stack.size = STACK_SIZE;
+
+    ctx->base_reg = MEM_BASE_REGISTER;
+    ctx->index_reg = MEM_INDEX_REGISTER;
+    ctx->index_xreg = MEM_VSIBX_REGISTER;
+    ctx->index_yreg = MEM_VSIBY_REGISTER;
+    ctx->index_zreg = MEM_VSIBZ_REGISTER;
+
+    return 0;
 }
 
 ZydisOperandType get_generic_operand_type(ZydisSemanticOperandType type)
@@ -372,16 +391,15 @@ int get_instruction_defs(instruction_defs_t *defs, bool exact)
     return 0;
 }
 
-
 // ZydisRegister base;
 // ZydisRegister index;
 // ZyanU8 scale;
 // ZyanI64 displacement;
 // ZyanU16 size;
 // (base) + (index * scale) + displacement
-size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, const ZydisEncodableInstruction *enc, instruction_t *ins, size_t idx)
+size_t generate_memory_operand(exec_ctx_t *ctx, const ZydisOperandDefinition *def, const ZydisEncodableInstruction *enc, instruction_t *ins, size_t idx)
 {
-    if (!cfg || !def || !ins)
+    if (!ctx || !def || !ins)
         return -1;
 
     ZydisEncoderOperand *op;
@@ -392,7 +410,7 @@ size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, c
     op->type = ZYDIS_OPERAND_TYPE_MEMORY;
 
     // TODO: Support other address sizes
-    // TODO: Index register should have some value between (cfg->snippet_mem_sz + op->mem.displacement) / op->mem.scale)
+    // TODO: Index register should have some value between (ctx->snippet_mem_sz + op->mem.displacement) / op->mem.scale)
     // Get a valid index registers
     ZydisRegisterClassLookupItem item;
     CHECK_ZYAN(ZydisRegisterGetClassLookupItem(ZYDIS_REGCLASS_GPR64, &item));
@@ -439,7 +457,7 @@ size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, c
     case ZYDIS_SEMANTIC_OPTYPE_MOFFS:
         // Displacement
         // TODO: This is supposed to be based on address size, offset relative to segment base
-        op->mem.displacement = rand_between(0, (cfg->snippet_memory.size - 64));
+        op->mem.displacement = rand_between(0, (ctx->memory.size - 64));
         op->mem.scale = 0;
         op->mem.index = ZYDIS_REGISTER_NONE;
         op->mem.base = ZYDIS_REGISTER_NONE;
@@ -447,7 +465,7 @@ size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, c
     case ZYDIS_SEMANTIC_OPTYPE_MIB:
         // Base / Index / Displacement
         op->mem.base = ZYDIS_REGISTER_RSI;
-        op->mem.displacement = rand_between(0, (cfg->snippet_memory.size - 64)); // Give displacement some room
+        op->mem.displacement = rand_between(0, (ctx->memory.size - 64)); // Give displacement some room
         op->mem.index = rand_exclude(item.lo, item.hi, ZYDIS_REGISTER_RSP, ZYDIS_REGISTER_RSP);
         op->mem.scale = 0; // Not relevant for MIB
         break;
@@ -456,12 +474,12 @@ size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, c
         op->mem.base = ZYDIS_REGISTER_RSI;
         //op->mem.scale = scale_values[rand_between(0, LENGTH(scale_values))];
         op->mem.scale = 1;
-        op->mem.displacement = rand_between(0, (cfg->snippet_memory.size - 64)); // Give displacement some room
+        op->mem.displacement = rand_between(0, (ctx->memory.size - 64)); // Give displacement some room
         op->mem.index = rand_exclude(item.lo, item.hi, ZYDIS_REGISTER_RSP, ZYDIS_REGISTER_RSP);
         break;
     case ZYDIS_SEMANTIC_OPTYPE_AGEN:
         // AGEN memory operands must choose from valid address sizes;
-        if (cfg->mode == ZYDIS_MACHINE_MODE_LONG_64)
+        if (ctx->mode == ZYDIS_MACHINE_MODE_LONG_64)
             op->mem.size = scale_values[rand_between(3, 4)];
         else
             op->mem.size = scale_values[rand_between(1, 3)]; // Not sure how to handle this outside 64bit mode
@@ -469,7 +487,7 @@ size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, c
         // Size has to match address size or somethign
         op->mem.base = ZYDIS_REGISTER_RSI;
         op->mem.scale = scale_values[rand_between(0, LENGTH(scale_values))];
-        op->mem.displacement = rand_between(0, (cfg->snippet_memory.size - 64)); // Give displacement some room
+        op->mem.displacement = rand_between(0, (ctx->memory.size - 64)); // Give displacement some room
         op->mem.index = rand_exclude(item.lo, item.hi, ZYDIS_REGISTER_RSP, ZYDIS_REGISTER_RSP); // RSP should not be used as an index
         break;
     // These are hard to make safely, index is an array of offsets (pos/neg)
@@ -489,9 +507,9 @@ size_t generate_memory_operand(config *cfg, const ZydisOperandDefinition *def, c
 
 // ZydisRegister value;
 // ZyanBool is4;
-int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, const ZydisEncodableInstruction *enc, instruction_t *ins, size_t idx)
+int generate_register_operand(exec_ctx_t *ctx, const ZydisOperandDefinition *def, const ZydisEncodableInstruction *enc, instruction_t *ins, size_t idx)
 {
-    if (!cfg || !def || !ins)
+    if (!ctx || !def || !ins)
         return -1;
     
     ZydisEncoderOperand *op;
@@ -511,7 +529,7 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
         case ZYDIS_IMPLREG_TYPE_STATIC:
             op->reg.value = def->op.reg.reg.reg;
             if (!ins->eosz)
-                ins->eosz = ZydisRegisterGetWidth(cfg->mode, op->reg.value) / 8;
+                ins->eosz = ZydisRegisterGetWidth(ctx->mode, op->reg.value) / 8;
 
             if (def->op.encoding == ZYDIS_OPERAND_ENCODING_IS4)
                 op->reg.is4 = ZYAN_TRUE;
@@ -535,7 +553,7 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
             break;
         case ZYDIS_IMPLREG_TYPE_GPR_ASZ: // Matches address size, register might already be set?
             if (!ins->eosz)
-                ins->eosz = mode_address_sizes[cfg->mode][rand_between(0, 1)];
+                ins->eosz = mode_address_sizes[ctx->mode][rand_between(0, 1)];
             
             class = get_gpr_class_from_size(ins->eosz);
             if (class == ZYDIS_REGCLASS_INVALID)
@@ -561,7 +579,7 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
         // Set the width of this register based on address size
         // TODO: This should use the new address size variable
         if (!ins->eosz)
-            ins->eosz = mode_address_sizes[cfg->mode][rand_between(0, 1)];
+            ins->eosz = mode_address_sizes[ctx->mode][rand_between(0, 1)];
         
         class = get_gpr_class_from_size(ins->eosz);
         if (class == ZYDIS_REGCLASS_INVALID)
@@ -585,7 +603,7 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
         if (ins_def->operand_size_map == 4) {
             size_t has_32 = 0;
             for (size_t i=0; i < classes->count; i++) {
-                if (ZydisRegisterClassGetWidth(cfg->mode, classes->classes[i]) == 32)
+                if (ZydisRegisterClassGetWidth(ctx->mode, classes->classes[i]) == 32)
                     has_32 = i;
             }
             
@@ -601,14 +619,14 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
         // if (def->element_type != ZYDIS_IELEMENT_TYPE_INVALID && def->size[0])
         //     ins->eosz = def->size[rand_between(0, 2)];
         // else
-        ins->eosz = ZydisRegisterClassGetWidth(cfg->mode, class) / 8;
+        ins->eosz = ZydisRegisterClassGetWidth(ctx->mode, class) / 8;
         
     // We can avoid selecting width if the definition simply specifies size
     } else if (classes->count == 1) {
         class = classes->classes[0];
     } else {
         for (size_t i=0; i < classes->count; i++) {
-            width = ZydisRegisterClassGetWidth(cfg->mode, classes->classes[i]) / 8;
+            width = ZydisRegisterClassGetWidth(ctx->mode, classes->classes[i]) / 8;
             if (width == ins->eosz)
                 class = classes->classes[i];
         }
@@ -616,7 +634,7 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
     
     // Default to selecting a random (known valid) size
     if (class == ZYDIS_REGCLASS_INVALID) {
-        if (ZydisRegisterClassGetWidth(cfg->mode, classes->classes[0]) == 16
+        if (ZydisRegisterClassGetWidth(ctx->mode, classes->classes[0]) == 16
             && ins->eosz > 2)
             class = classes->classes[rand_between(1, classes->count)];
         else
@@ -643,7 +661,7 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
 
     } else if (def->type == ZYDIS_SEMANTIC_OPTYPE_CR) {
         static uint8_t cr_lookup[5] = {0, 2, 3, 4, 8};
-        if (cfg->mode != ZYDIS_MACHINE_MODE_LONG_64)
+        if (ctx->mode != ZYDIS_MACHINE_MODE_LONG_64)
             reg_id = cr_lookup[rand_between(0, 4)];
         else
             reg_id = cr_lookup[rand_between(0, 5)];
@@ -672,9 +690,9 @@ int generate_register_operand(config *cfg, const ZydisOperandDefinition *def, co
 
 // ZyanU64 u;
 // ZyanI64 s;
-int generate_immediate_operand(config *cfg, const ZydisOperandDefinition *def, instruction_t *ins, size_t idx)
+int generate_immediate_operand(exec_ctx_t *ctx, const ZydisOperandDefinition *def, instruction_t *ins, size_t idx)
 {
-    if (!cfg || !def || !ins)
+    if (!ctx || !def || !ins)
         return -1;
     
     ZydisEncoderOperand *op;
@@ -764,7 +782,7 @@ int generate_immediate_operand(config *cfg, const ZydisOperandDefinition *def, i
 //         ZyanI64 s;
 //     } imm;
 // } ZydisEncoderOperand;
-int generate_operand(config *cfg, const ZydisOperandDefinition *def, const ZydisEncodableInstruction *enc, instruction_t *ins, size_t idx)
+int generate_operand(exec_ctx_t *ctx, const ZydisOperandDefinition *def, const ZydisEncodableInstruction *enc, instruction_t *ins, size_t idx)
 {
     //print_op_def(def);
     
@@ -790,7 +808,7 @@ int generate_operand(config *cfg, const ZydisOperandDefinition *def, const Zydis
     case ZYDIS_SEMANTIC_OPTYPE_CR:
     case ZYDIS_SEMANTIC_OPTYPE_DR:
     case ZYDIS_SEMANTIC_OPTYPE_MASK:
-        CHECK_INT(generate_register_operand(cfg, def, enc, ins, idx), ESLIENT);
+        CHECK_INT(generate_register_operand(ctx, def, enc, ins, idx), ESLIENT);
         break;
     // Memory Operands
     case ZYDIS_SEMANTIC_OPTYPE_IMPLICIT_MEM:
@@ -802,13 +820,13 @@ int generate_operand(config *cfg, const ZydisOperandDefinition *def, const Zydis
     case ZYDIS_SEMANTIC_OPTYPE_MEM_VSIBY:
     case ZYDIS_SEMANTIC_OPTYPE_MEM_VSIBZ:
     case ZYDIS_SEMANTIC_OPTYPE_MEM:
-        CHECK_INT(generate_memory_operand(cfg, def, enc, ins, idx), ESLIENT);
+        CHECK_INT(generate_memory_operand(ctx, def, enc, ins, idx), ESLIENT);
         break;
     // Immediate Operands
     case ZYDIS_SEMANTIC_OPTYPE_IMPLICIT_IMM1:
     case ZYDIS_SEMANTIC_OPTYPE_REL:
     case ZYDIS_SEMANTIC_OPTYPE_IMM:
-        CHECK_INT(generate_immediate_operand(cfg, def, ins, idx), ESLIENT);
+        CHECK_INT(generate_immediate_operand(ctx, def, ins, idx), ESLIENT);
         break;
     case ZYDIS_SEMANTIC_OPTYPE_UNUSED:
     default:
@@ -830,7 +848,7 @@ int generate_operand(config *cfg, const ZydisOperandDefinition *def, const Zydis
 // ZydisAddressSizeHint address_size_hint;                  |       x
 // ZydisOperandSizeHint operand_size_hint;                  |       x
 // ZydisEncoderOperand operands[ZYDIS_ENCODER_MAX_OPERANDS];|       x
-static int generate_instruction(config *cfg, instruction_t *ins, const ZydisEncodableInstruction *enc)
+static int generate_instruction(exec_ctx_t *ctx, instruction_t *ins, const ZydisEncodableInstruction *enc)
 {
     ZyanStatus status;
     ZyanU64 size = ZYDIS_MAX_INSTRUCTION_LENGTH;
@@ -869,10 +887,10 @@ static int generate_instruction(config *cfg, instruction_t *ins, const ZydisEnco
         break;
     case ZYDIS_BRANCH_TYPE_NEAR:
     case ZYDIS_BRANCH_TYPE_FAR:
-        if (cfg->mode == ZYDIS_MACHINE_MODE_LONG_64)
+        if (ctx->mode == ZYDIS_MACHINE_MODE_LONG_64)
             ins->eosz = 8; // 64 bit mode only supports r/m64 operands
         else
-            ins->eosz = mode_address_sizes[cfg->mode][rand_between(0, 1)];
+            ins->eosz = mode_address_sizes[ctx->mode][rand_between(0, 1)];
         
         //printf("I have chosen a size of %ld\n", ins->eosz);
         ins->req.branch_width = get_branch_width(ins); 
@@ -890,17 +908,17 @@ static int generate_instruction(config *cfg, instruction_t *ins, const ZydisEnco
 
 
             //printf("----- OPERAND %d ----\n", i+1);
-            CHECK_INT(generate_operand(cfg, &op_def[i+1], enc, ins, i+1), ESLIENT);
+            CHECK_INT(generate_operand(ctx, &op_def[i+1], enc, ins, i+1), ESLIENT);
 
             //printf("----- OPERAND %d ----\n", i);
-            CHECK_INT(generate_operand(cfg, &op_def[i], enc, ins, i), ESLIENT);
+            CHECK_INT(generate_operand(ctx, &op_def[i], enc, ins, i), ESLIENT);
 
             i+=1;
             continue;
         }
 
         //printf("----- OPERAND %d ----\n", i);
-        CHECK_INT(generate_operand(cfg, &op_def[i], enc, ins, i), ESLIENT);
+        CHECK_INT(generate_operand(ctx, &op_def[i], enc, ins, i), ESLIENT);
     }
     
     // TODO: handle extra encoding types here
@@ -921,7 +939,7 @@ static int generate_instruction(config *cfg, instruction_t *ins, const ZydisEnco
     
     // Fill in the last bits of metadata that are known
     ins->idx = 0;
-    ins->address = cfg->snippet_code.address;
+    ins->address = ctx->code.address;
     ins->length = size;
     ins->jump_target = JUMP_INVALID;
     
@@ -933,7 +951,7 @@ static int generate_instruction(config *cfg, instruction_t *ins, const ZydisEnco
 }
 
 // Generates a completely random instruction
-int create_random_instruction(config *cfg, instruction_t *ins)
+int create_random_instruction(exec_ctx_t *ctx, instruction_t *ins)
 {
     ZyanStatus status_dec, status_enc;
     uint8_t buf[16];
@@ -947,7 +965,7 @@ int create_random_instruction(config *cfg, instruction_t *ins)
         
         //printf("Random bytes 0x%llx 0x%llx\n", ((uint64_t *)buf)[0], ((uint64_t *)buf)[1]);
         
-        status_dec = ZydisDisassembleIntel(cfg->mode, CODE_ADDR, buf, 16, &ins_buf);
+        status_dec = ZydisDisassembleIntel(ctx->mode, CODE_ADDR, buf, 16, &ins_buf);
 
         status_enc = ZydisEncoderDecodedInstructionToEncoderRequest(
                     &ins_buf.info,
@@ -985,7 +1003,7 @@ int create_random_instruction(config *cfg, instruction_t *ins)
 }
 
 // Creates a pseudo random instruction, according to some requirements
-int create_instruction(config *cfg, instruction_t *ins, ZydisMnemonic mnemonic, ZydisOperandType *operands)
+int create_instruction(exec_ctx_t *ctx, instruction_t *ins, ZydisMnemonic mnemonic, ZydisOperandType *operands)
 {
     instruction_defs_t defs = {0};
     defs.mnemonic = mnemonic;
@@ -1008,10 +1026,10 @@ int create_instruction(config *cfg, instruction_t *ins, ZydisMnemonic mnemonic, 
         return -100; // TODO: More informative error here
     }
 
-    return generate_instruction(cfg, ins, defs.matching_defs[rand_between(0, defs.count)]);
+    return generate_instruction(ctx, ins, defs.matching_defs[rand_between(0, defs.count)]);
 }
 
-int create_snippet(config *cfg, snippet_t *snip, size_t length, generate_method_t method)
+int create_snippet(exec_ctx_t *ctx, snippet_t *snip, gen_idx_t *idx, size_t length, generate_method_t method)
 {
     instruction_t *ins;
     ZydisMnemonic mnemonic;
@@ -1019,11 +1037,6 @@ int create_snippet(config *cfg, snippet_t *snip, size_t length, generate_method_
     
     // Gotta be sure that these are initialized
     snip->count = 0;
-    snip->start_address = cfg->snippet_code.address;
-    snip->mem_start = cfg->snippet_memory.address;
-    snip->mem_sz = cfg->snippet_memory.size;
-    snip->index_reg = cfg->mem_index_register;
-    snip->base_reg = cfg->mem_base_register;
 
     for (size_t i=0; i < length; i++) {
         ins = snippet_allocate(snip);
@@ -1034,25 +1047,25 @@ int create_snippet(config *cfg, snippet_t *snip, size_t length, generate_method_
         
         switch (method) {
         case METHOD_GENERATE:
-            CHECK_INT(create_random_instruction(cfg, ins), EGENERIC);
+            CHECK_INT(create_random_instruction(ctx, ins), EGENERIC);
             break;
         case METHOD_CREATE:
-            mnemonic = cfg->index.instructions[rand_between(0, cfg->index.count)];
-            ret = create_instruction(cfg, ins, mnemonic, NULL);
+            mnemonic = idx->instructions[rand_between(0, idx->count)];
+            ret = create_instruction(ctx, ins, mnemonic, NULL);
             //CHECK_INT(ret, EGENERIC);
             if (ret < 0)
-                CHECK_INT(create_random_instruction(cfg, ins), EGENERIC);
+                CHECK_INT(create_random_instruction(ctx, ins), EGENERIC);
             break;
         case METHOD_MIXED:
             ret = 0;
             if (i % 2 == 0) {
-                mnemonic = cfg->index.instructions[rand_between(0, cfg->index.count)];
-                ret = create_instruction(cfg, ins, mnemonic, NULL);
+                mnemonic = idx->instructions[rand_between(0, idx->count)];
+                ret = create_instruction(ctx, ins, mnemonic, NULL);
                 //CHECK_INT(ret, EGENERIC);
             } 
 
             if (i % 2 != 0 || ret < 0) {
-                CHECK_INT(create_random_instruction(cfg, ins), EGENERIC);
+                CHECK_INT(create_random_instruction(ctx, ins), EGENERIC);
             }
             break;
         default:
@@ -1062,11 +1075,11 @@ int create_snippet(config *cfg, snippet_t *snip, size_t length, generate_method_
         CHECK_INT(snippet_append(snip, ins), EGENERIC);
     }
     
-    return pipeline_validate(snip);
+    return pipeline_validate(snip, ctx);
 }
 
 // Pretty much all of these invalidate length/address metadata
-int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
+int mutate_snippet(exec_ctx_t *ctx, snippet_t *snip, gen_idx_t *idx, enum mutation type)
 {
     instruction_t *tmp;
     list_node pos;
@@ -1084,7 +1097,7 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         tmp = snippet_allocate(snip);
         
         CHECK_PTR(tmp, EGENERIC);
-        CHECK_INT(create_random_instruction(cfg, tmp), EGENERIC);
+        CHECK_INT(create_random_instruction(ctx, tmp), EGENERIC);
         if (idx1 >= snip->count)
             CHECK_INT(snippet_append(snip, tmp), EGENERIC);
         else
@@ -1092,15 +1105,15 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         break;
     case MUT_ADD_DET:
         idx1 = rand_between(0, snip->count+1);
-        idx2 = rand_between(0, cfg->index.count);
+        idx2 = rand_between(0, idx->count);
         tmp = snippet_allocate(snip);
 
         CHECK_PTR(tmp, EGENERIC);
-        ret = create_instruction(cfg, tmp, cfg->index.instructions[idx2], NULL);
+        ret = create_instruction(ctx, tmp, idx->instructions[idx2], NULL);
         if (ret < 0) {
             CHECK_INT(arena_free(snip->instructions, tmp), EGENERIC);
             //CHECK_INT(ret, EGENERIC);
-            return mutate_snippet(cfg, snip, MUT_ADD_RAND); // Fallback incase generation fails
+            return mutate_snippet(ctx, snip, idx, MUT_ADD_RAND); // Fallback incase generation fails
         }
 
         if (idx1 >= snip->count)
@@ -1116,7 +1129,7 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         pos = tmp->node;
         
         CHECK_PTR(tmp, EGENERIC);
-        CHECK_INT(create_random_instruction(cfg, tmp), EGENERIC);
+        CHECK_INT(create_random_instruction(ctx, tmp), EGENERIC);
         tmp->node = pos;
         break;
     case MUT_REPLACE_NOP:
@@ -1125,7 +1138,7 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         pos = tmp->node;
         memset(tmp, 0, sizeof(instruction_t));
 
-        CHECK_INT(create_instruction(cfg, tmp, ZYDIS_MNEMONIC_NOP, NULL), EGENERIC);
+        CHECK_INT(create_instruction(ctx, tmp, ZYDIS_MNEMONIC_NOP, NULL), EGENERIC);
         tmp->node = pos;
         break;
     case MUT_REPEAT: // TODO: Should this be repeat n times?
@@ -1152,7 +1165,7 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
 
         pos = tmp->node;
         // Create a new instruction with the same type and operand types
-        CHECK_INT(create_instruction(cfg, tmp, tmp->req.mnemonic, ops), EGENERIC);
+        CHECK_INT(create_instruction(ctx, tmp, tmp->req.mnemonic, ops), EGENERIC);
         tmp->node = pos;
         break;
     case MUT_REPLACE_ARGS:
@@ -1164,7 +1177,7 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         
         pos = tmp->node;
         // Create a new instruction of the same type with (possibly) different operands
-        CHECK_INT(create_instruction(cfg, tmp, tmp->req.mnemonic, NULL), EGENERIC);
+        CHECK_INT(create_instruction(ctx, tmp, tmp->req.mnemonic, NULL), EGENERIC);
         tmp->node = pos;
         break;
     case MUT_SWAP_ARGS: // TODO: Maybe remove this one, as it has a fairly large chance of not working
@@ -1189,11 +1202,11 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         tmp = snippet_allocate(snip);
 
         CHECK_PTR(tmp, EGENERIC);
-        ret = create_instruction(cfg, tmp, (ZydisMnemonic)idx2, NULL);
+        ret = create_instruction(ctx, tmp, (ZydisMnemonic)idx2, NULL);
         if (ret < 0) {
             CHECK_INT(arena_free(snip->instructions, tmp), EGENERIC);
             //CHECK_INT(ret, EGENERIC);
-            return mutate_snippet(cfg, snip, MUT_ADD_RAND); // Fallback incase generation fails
+            return mutate_snippet(ctx, snip, idx, MUT_ADD_RAND); // Fallback incase generation fails
         }
 
         if (idx1 >= snip->count)
@@ -1206,11 +1219,11 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         tmp = snippet_allocate(snip);
 
         CHECK_PTR(tmp, EGENERIC);
-        ret = create_instruction(cfg, tmp, ZYDIS_MNEMONIC_VZEROUPPER, NULL);
+        ret = create_instruction(ctx, tmp, ZYDIS_MNEMONIC_VZEROUPPER, NULL);
         if (ret < 0) {
             CHECK_INT(arena_free(snip->instructions, tmp), EGENERIC);
             //CHECK_INT(ret, EGENERIC);
-            return mutate_snippet(cfg, snip, MUT_ADD_RAND); // Fallback incase generation fails
+            return mutate_snippet(ctx, snip, idx, MUT_ADD_RAND); // Fallback incase generation fails
         }
 
         if (idx1 >= snip->count)
@@ -1224,10 +1237,10 @@ int mutate_snippet(config *cfg, snippet_t *snip, enum mutation type)
         return -1;
     }
 
-    return pipeline_validate(snip);
+    return pipeline_validate(snip, ctx);
 }
 
-int create_index(config *cfg)
+int create_index(exec_ctx_t *ctx, gen_idx_t *idx)
 {
     double successes = 0.0;
     instruction_t ins = {0};
@@ -1236,27 +1249,27 @@ int create_index(config *cfg)
         successes = 0.0;
         memset(&ins, 0, sizeof(instruction_t));
 
-        for (size_t i=0; i < cfg->index.iterations; i++) {
-            if (create_instruction(cfg, &ins, mnemonic, NULL) != 0)
+        for (size_t i=0; i < idx->iterations; i++) {
+            if (create_instruction(ctx, &ins, mnemonic, NULL) != 0)
                 continue;
             
             successes++;
         }
 
         // We only want reliable instructions
-        if ((successes / cfg->index.iterations) < cfg->index.threshold)
+        if ((successes / idx->iterations) < idx->threshold)
             continue;
         
-        cfg->index.instructions[cfg->index.count++] = mnemonic;
+        idx->instructions[idx->count++] = mnemonic;
     }
 
-    if (cfg->index.count == 0)
+    if (idx->count == 0)
         return -1;
 
     return 0;
 }
 
-int test_generate_all(config *cfg, ZydisMachineMode mode, bool count, ZydisMnemonic start)
+int test_generate_all(exec_ctx_t *ctx, ZydisMachineMode mode, bool count, ZydisMnemonic start)
 {
     size_t num_variations;
     size_t size;
@@ -1282,7 +1295,7 @@ int test_generate_all(config *cfg, ZydisMachineMode mode, bool count, ZydisMnemo
 
         for (size_t j=0; j < num_variations; ++j) {
             // Some things we cannot encode in a given machine mode
-            if (!(variations[j].modes & (_ZydisGetMachineModeWidth(cfg->mode) >> 4))) {
+            if (!(variations[j].modes & (_ZydisGetMachineModeWidth(ctx->mode) >> 4))) {
                 skipped += 1;
                 continue;
             }
@@ -1290,7 +1303,7 @@ int test_generate_all(config *cfg, ZydisMachineMode mode, bool count, ZydisMnemo
             memset(&req, 0, sizeof(instruction_t));
             printf("===== %s VARIATION %ld =====\n", ZydisMnemonicGetString(mnemonic), j);
             
-            ret = generate_instruction(cfg, &req, &variations[j]);
+            ret = generate_instruction(ctx, &req, &variations[j]);
             if (count && (ret < 0))
                 continue;
             else

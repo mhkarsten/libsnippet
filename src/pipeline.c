@@ -16,8 +16,10 @@
 #include <Zydis/Internal/EncoderData.h>
 #include <Zydis/Internal/FormatterBase.h>
 
-#include "Zydis/DecoderTypes.h"
+#include <Zydis/DecoderTypes.h>
 
+#include "libsnippet/debug_strings.h"
+#include "libsnippet/generate.h"
 #include "libsnippet/snippet.h"
 #include "libsnippet/common.h"
 #include "libsnippet/list.h"
@@ -60,7 +62,7 @@ int pipeline_register(pipeline_t *pipe, void *fn, pass_type type)
 }
 
 // Best case O(n * (2 * N))
-int pipeline_execute(pipeline_t *pipe, snippet_t *snip)
+int pipeline_execute(pipeline_t *pipe, snippet_t *snip, exec_ctx_t *ctx)
 {
     list_node *temp, *pos;
     pass_t *curr_pass;
@@ -72,20 +74,53 @@ int pipeline_execute(pipeline_t *pipe, snippet_t *snip)
             continue;
         
         // Always validate the metadata first, it might be stale
-        CHECK_INT(validate_metadata(snip), EGENERIC);
+        CHECK_INT(validate_metadata(snip, ctx), EGENERIC);
 
         switch (curr_pass->type) {
         case PASS_TYPE_FN:
-            CHECK_INT(((pass_fn)curr_pass->fn)(snip), EGENERIC); // TODO: Something errors here as well
+            CHECK_INT(((pass_fn)curr_pass->fn)(snip, ctx), EGENERIC); // TODO: Something errors here as well
             break;
         case PASS_TYPE_WALKER:
-            CHECK_INT(walk_instructions(snip, ((walk_fn)curr_pass->fn), NULL), EGENERIC);
+            CHECK_INT(walk_instructions(snip, ctx, ((walk_fn)curr_pass->fn), NULL), EGENERIC);
             break;
         default:
             return -1;
         }
     }
 
+    return 0;
+}
+
+static int walk_basic_blocks_rec(snippet_t *snip, exec_ctx_t *ctx, basic_block_t *cur_bb, walk_bb_fn fn, void *userdata)
+{
+    if (!cur_bb)
+        return 0;
+
+    CHECK_INT(fn(snip, ctx, cur_bb, userdata), EGENERIC);
+    
+    CHECK_INT(walk_basic_blocks_rec(snip, ctx, cur_bb->next[0], fn, userdata), EGENERIC);
+
+    return walk_basic_blocks_rec(snip, ctx, cur_bb->next[1], fn, userdata);
+}
+
+int walk_basic_blocks(snippet_t *snip, exec_ctx_t *ctx, walk_bb_fn fn, void *userdata)
+{
+    if (!snip->blocks)
+        return -1;
+
+    return walk_basic_blocks_rec(snip, ctx, &snip->blocks[0], fn, userdata);
+}
+
+int walk_instructions(snippet_t *snip, exec_ctx_t *ctx, walk_fn fn, void *userdata) 
+{
+    list_node *temp, *pos;
+    instruction_t *ins;
+
+    list_for_each_safe(pos, temp, &snip->head) {
+        ins = container_of(pos, instruction_t, node);
+        CHECK_INT(fn(snip, ctx, ins, userdata), EGENERIC);
+    }
+    
     return 0;
 }
 
@@ -140,7 +175,7 @@ static instruction_t *find_target(instruction_t *targets[], size_t min, size_t m
     //return NULL;
 }
 
-static int mark_leaders(snippet_t *snip, instruction_t *ins, void *userdata)
+static int mark_leaders(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
 {
     uint8_t *leaders = (uint8_t *)userdata;
 
@@ -183,37 +218,37 @@ int get_branch_imm_width(instruction_t *ins) // In bytes
     }
 }
 
-static int init_basic_block(snippet_t *snip, instruction_t *ins, void *userdata)
+static int init_basic_block(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
 {
-    bb_ctx_t *ctx = (bb_ctx_t *)userdata;
+    bb_ctx_t *bb_ctx = (bb_ctx_t *)userdata;
     list_node *pos = &ins->node;
 
-    if (!bitmap_get(ctx->leaders, ins->idx))
+    if (!bitmap_get(bb_ctx->leaders, ins->idx))
         return 0;
     
     // If we are currently in a block, terminate it
-    if (ctx->bb) {
-        ctx->bb->end = container_of(pos->prev, instruction_t, node);
-        CHECK_INT(list_insert_after(&ctx->bb->node, &ctx->bb_list), EGENERIC);
+    if (bb_ctx->bb) {
+        bb_ctx->bb->end = container_of(pos->prev, instruction_t, node);
+        CHECK_INT(list_insert_after(&bb_ctx->bb->node, &bb_ctx->bb_list), EGENERIC);
     }
     
     // Init the next basic block
-    ctx->bb = arena_allocate(snip->basic_blocks);
-    ctx->bb->index = ctx->idx;
-    ctx->bb->start = ins;
-    ctx->bb->end = NULL;
-    ctx->block_map[ins->idx] = ctx->bb; // Add a mapping between instruction -> bb (only needed for leaders)
+    bb_ctx->bb = arena_allocate(snip->basic_blocks);
+    bb_ctx->bb->index = bb_ctx->idx;
+    bb_ctx->bb->start = ins;
+    bb_ctx->bb->end = NULL;
+    bb_ctx->block_map[ins->idx] = bb_ctx->bb; // Add a mapping between instruction -> bb (only needed for leaders)
 
-    ctx->idx++;
+    bb_ctx->idx++;
 
     // If this is the first basic block, add it to the snippet
     if (list_is_first(pos, &snip->head))
-        snip->blocks = ctx->bb;
+        snip->blocks = bb_ctx->bb;
     
     // This is the last instruction, terminate the final block
     if (list_is_last(pos, &snip->head)) {
-        ctx->bb->end = ins;
-        CHECK_INT(list_insert_after(&ctx->bb->node, &ctx->bb_list), EGENERIC);
+        bb_ctx->bb->end = ins;
+        CHECK_INT(list_insert_after(&bb_ctx->bb->node, &bb_ctx->bb_list), EGENERIC);
     }
     
     return 0;
@@ -244,10 +279,10 @@ int generate_basic_blocks(snippet_t *snip)
 
     // Mark all leaders (bb start) in a bitmap (The first instruction is always a leader)
     leaders[0] = leaders[0] & 1;
-    CHECK_INT(walk_instructions(snip, mark_leaders, (void *)leaders), EGENERIC);
+    CHECK_INT(walk_instructions(snip, NULL, mark_leaders, (void *)leaders), EGENERIC);
     
     // Create and allocate all of the needed basic block structs
-    CHECK_INT(walk_instructions(snip, init_basic_block, (void *)&ctx), EGENERIC);
+    CHECK_INT(walk_instructions(snip, NULL, init_basic_block, (void *)&ctx), EGENERIC);
 
     // Finally connect the basic blocks
     list_for_each_safe(pos, temp, &ctx.bb_list) {
@@ -265,10 +300,10 @@ int generate_basic_blocks(snippet_t *snip)
     return 0;
 }
 
-int validate_metadata(snippet_t *snip)
+int validate_metadata(snippet_t *snip, exec_ctx_t *ctx)
 {
     ZyanU8 buf[ZYDIS_MAX_INSTRUCTION_LENGTH] = {0};
-    uint64_t address = snip->start_address;
+    uint64_t address = ctx->code.address;
     size_t idx = 0;
     ZyanUSize length;
     list_node *temp, *pos;
@@ -302,7 +337,7 @@ int validate_metadata(snippet_t *snip)
     return 0;
 }
 
-int validate_registers(snippet_t *snip, instruction_t *ins, void *userdata)
+int validate_registers(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
 {
     ZydisEncoderOperand *op;
     ZydisRegisterClassLookupItem item;
@@ -348,13 +383,13 @@ int validate_registers(snippet_t *snip, instruction_t *ins, void *userdata)
             new_reg = ZydisRegisterGetId(rand_exclude(ZYDIS_REGISTER_RAX, ZYDIS_REGISTER_R15, ZYDIS_REGISTER_RSP, ZYDIS_REGISTER_RDI));
             break;
         case ZYDIS_REGISTER_XMM0:
-            new_reg = ZydisRegisterGetId(rand_exclude(item.lo, item.hi, snip->index_xreg, snip->index_xreg));
+            new_reg = ZydisRegisterGetId(rand_exclude(item.lo, item.hi, ctx->index_xreg, ctx->index_xreg));
             break;
         case ZYDIS_REGISTER_YMM0:
-            new_reg = ZydisRegisterGetId(rand_exclude(item.lo, item.hi, snip->index_yreg, snip->index_yreg));
+            new_reg = ZydisRegisterGetId(rand_exclude(item.lo, item.hi, ctx->index_yreg, ctx->index_yreg));
             break;
         case ZYDIS_REGISTER_ZMM0:
-            new_reg = ZydisRegisterGetId(rand_exclude(item.lo, item.hi, snip->index_zreg, snip->index_zreg));
+            new_reg = ZydisRegisterGetId(rand_exclude(item.lo, item.hi, ctx->index_zreg, ctx->index_zreg));
             break;
         default:
             continue; // Register not special go to next ieration
@@ -366,7 +401,7 @@ int validate_registers(snippet_t *snip, instruction_t *ins, void *userdata)
     return 0;
 }
 
-int validate_memory_operands(snippet_t *snip, instruction_t *ins, void *userdata)
+int validate_memory_operands(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
 {
     ZydisEncoderOperand *op;
     ZydisRegisterClass reg_class;
@@ -388,14 +423,14 @@ int validate_memory_operands(snippet_t *snip, instruction_t *ins, void *userdata
         // Make sure we are always using valid base
         if (op->mem.base) {
             reg_class = ZydisRegisterGetClass(op->mem.base);
-            op->mem.base = ZydisRegisterEncode(reg_class, ZydisRegisterGetId(snip->base_reg));
+            op->mem.base = ZydisRegisterEncode(reg_class, ZydisRegisterGetId(ctx->base_reg));
         }
         
         if (op->mem.displacement && !op->mem.base) {
-            op->mem.displacement = snip->mem_start + rand_between(0, snip->mem_sz - 64);
+            op->mem.displacement = ctx->memory.address + rand_between(0, ctx->memory.size - 64);
         } else if (op->mem.displacement) {
             // Keep halfing displacement until we reach a reasonable point
-            while (llabs(op->mem.displacement) >= snip->mem_sz)
+            while (llabs(op->mem.displacement) >= ctx->memory.size)
                 op->mem.displacement = op->mem.displacement / 2;  
         }
 
@@ -410,16 +445,16 @@ int validate_memory_operands(snippet_t *snip, instruction_t *ins, void *userdata
         // Some instructions need special handling for index
         switch (match.operands[i].type) {
         case ZYDIS_SEMANTIC_OPTYPE_MEM_VSIBX:
-            idx_reg = snip->index_xreg;
+            idx_reg = ctx->index_xreg;
             break;
         case ZYDIS_SEMANTIC_OPTYPE_MEM_VSIBY:
-            idx_reg = snip->index_yreg;
+            idx_reg = ctx->index_yreg;
             break;
         case ZYDIS_SEMANTIC_OPTYPE_MEM_VSIBZ:
-            idx_reg = snip->index_zreg;
+            idx_reg = ctx->index_zreg;
             break;
         default:
-            idx_reg = snip->index_reg;
+            idx_reg = ctx->index_reg;
             break;
         }
         
@@ -430,7 +465,7 @@ int validate_memory_operands(snippet_t *snip, instruction_t *ins, void *userdata
     return 0;
 }
 
-int validate_rip_relative_mem(snippet_t *snip)
+int validate_rip_relative_mem(snippet_t *snip, exec_ctx_t *ctx)
 {
     bool changed = true;
     list_node *pos, *temp;
@@ -441,7 +476,7 @@ int validate_rip_relative_mem(snippet_t *snip)
     while (changed) {
         changed = false;
 
-        CHECK_INT(validate_metadata(snip), EGENERIC);
+        CHECK_INT(validate_metadata(snip, ctx), EGENERIC);
 
         list_for_each_safe(pos, temp, &snip->head) {
             ins = container_of(pos, instruction_t, node);
@@ -458,13 +493,13 @@ int validate_rip_relative_mem(snippet_t *snip)
                 target = ins->address + op->mem.displacement;
                 
                 // If we are not changing displacement, there is no issue
-                if (target < snip->mem_start || target >= (snip->mem_start + snip->mem_sz))
+                if (target < ctx->memory.address || target >= (ctx->memory.address + ctx->memory.size))
                     changed = true;
                 else
                     continue;
                 
                 // Calcuate a new displacement based on the old one
-                op->mem.displacement = (snip->mem_start - ins->address) + llabs(op->mem.displacement) % (snip->mem_sz - 128);
+                op->mem.displacement = (ctx->memory.address - ins->address) + llabs(op->mem.displacement) % (ctx->memory.size - 128);
             }
         }
     }
@@ -474,7 +509,7 @@ int validate_rip_relative_mem(snippet_t *snip)
 
 // Goes through each jump and ensures that they all use immediates, and have valid targets
 // O(n^2)
-int validate_jump_operands(snippet_t *snip, instruction_t *ins, void *userdata)
+int validate_jump_operands(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
 {
     if (!is_jump(ins->req.mnemonic))
         return 0;
@@ -522,7 +557,7 @@ int validate_jump_operands(snippet_t *snip, instruction_t *ins, void *userdata)
 
 // Instructions are expected to be in a properly sorted order w.r.t. their addresses
 // O(N) + O(N log N)
-int validate_jump_targets(snippet_t *snip)
+int validate_jump_targets(snippet_t *snip, exec_ctx_t *ctx)
 {
     list_node *temp, *pos;
     instruction_t *targets[snip->count];
@@ -563,7 +598,7 @@ int validate_jump_targets(snippet_t *snip)
 
 // The jump offsets/addresses can not be assumed to be valid here (this is what we are calculating)
 // O(n^2) or greater
-int validate_jump_offsets(snippet_t *snip)
+int validate_jump_offsets(snippet_t *snip, exec_ctx_t *ctx)
 {
     bool changed = true;
     int64_t new_offset;
@@ -577,7 +612,7 @@ int validate_jump_offsets(snippet_t *snip)
         changed = false;
         // Set the length (and thus address) of all instructions
         // TODO: Maybe restructure this as a pass
-        CHECK_INT(validate_metadata(snip), EGENERIC);
+        CHECK_INT(validate_metadata(snip, ctx), EGENERIC);
 
         list_for_each_safe(pos, temp, &snip->head) {
             ins = container_of(pos, instruction_t, node);
@@ -603,7 +638,7 @@ int validate_jump_offsets(snippet_t *snip)
 }
 
 // TODO: Extend this to check the current user priv (for kernel fuzzing)
-int validate_instructions(snippet_t *snip, instruction_t *ins, void *userdata)
+int validate_instructions(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
 {
     // Just remove all priv instructions
     if (ins->privileged) {
@@ -650,7 +685,7 @@ int validate_instructions(snippet_t *snip, instruction_t *ins, void *userdata)
     return 0;
 }
 
-int pipeline_validate(snippet_t *snip)
+int pipeline_validate(snippet_t *snip, exec_ctx_t *ctx)
 {
     pipeline_t pipe;
 
@@ -667,25 +702,108 @@ int pipeline_validate(snippet_t *snip)
     CHECK_INT(pipeline_register(&pipe, validate_rip_relative_mem, PASS_TYPE_FN), EGENERIC);
     CHECK_INT(pipeline_register(&pipe, validate_jump_offsets, PASS_TYPE_FN), EGENERIC);
     
-    return pipeline_execute(&pipe, snip);
+    return pipeline_execute(&pipe, snip, ctx);
 }
 
-int pipeline_encode(snippet_t *snip)
+int pipeline_encode(snippet_t *snip, exec_ctx_t *ctx)
 {
     pipeline_t pipe;
 
     CHECK_INT(pipeline_init(&pipe), EGENERIC);
     CHECK_INT(pipeline_register(&pipe, validate_jump_offsets, PASS_TYPE_FN), EGENERIC);
     
-    return pipeline_execute(&pipe, snip);
+    return pipeline_execute(&pipe, snip, ctx);
 }
 
-int pipeline_decode(snippet_t *snip)
+int pipeline_decode(snippet_t *snip, exec_ctx_t *ctx)
 {
     pipeline_t pipe;
 
     CHECK_INT(pipeline_init(&pipe), EGENERIC);
     CHECK_INT(pipeline_register(&pipe, validate_jump_targets, PASS_TYPE_FN), EGENERIC);
 
-    return pipeline_execute(&pipe, snip);
+    return pipeline_execute(&pipe, snip, ctx);
+}
+
+int print_instruction(snippet_t *snip, exec_ctx_t *ctx, instruction_t *ins, void *userdata)
+{
+    ZydisEncoderOperand *operand;
+    printf("%ld\t[%ld] %s ", ins->idx, ins->length, ZydisMnemonicGetString(ins->req.mnemonic));
+        
+    for (int op = 0; op < ins->req.operand_count; op++) {
+        operand = &ins->req.operands[op];
+        printf("%s ", zydis_operand_type_strings[operand->type]);
+        
+        switch (operand->type) {
+        case ZYDIS_OPERAND_TYPE_MEMORY:
+            printf("[");
+            if (operand->mem.base)
+                printf("%s", ZydisRegisterGetString(operand->mem.base));
+            if (operand->mem.index) {
+                if (operand->mem.base)
+                    printf(" + ");
+
+                printf("(%s * %d)", ZydisRegisterGetString(operand->mem.index), operand->mem.scale);
+            }
+            if (operand->mem.displacement) {
+                if (operand->mem.base || operand->mem.index)
+                    printf(" + ");
+
+                printf("0x%lx", operand->mem.displacement);
+            }
+            printf("] (%hu)", operand->mem.size);
+            break;
+        case ZYDIS_OPERAND_TYPE_IMMEDIATE:
+            if (is_jump(ins->req.mnemonic) && ins->jump_target)
+                printf("0x%lx (%ld)", operand->imm.s,  ins->jump_target->idx);
+            else
+                printf("0x%lx", operand->imm.u);
+            break;
+        case ZYDIS_OPERAND_TYPE_REGISTER:
+                printf("%s (is4 %d)", ZydisRegisterGetString(operand->reg.value), operand->reg.is4);
+            break;
+        default:
+            printf("UNSUPPORTED");
+            break;
+        }
+
+        if (ins->req.operand_count > 1 
+            && op != (ins->req.operand_count - 1))
+            printf(", ");
+    }
+
+    printf("\n");
+    return 0;
+}
+
+int snippet_print(snippet_t *snip, uint64_t rt_address, FILE *dst, bool use_zydis)
+{
+    if (!use_zydis)
+        return walk_instructions(snip, NULL, print_instruction, NULL);
+
+    ZyanU8 instructions[PRINT_BUF_SZ] = {0};
+    ZyanUSize offset = 0;
+    ZydisDisassembledInstruction ins;
+    size_t idx = 0;
+    
+    CHECK_INT(snippet_encode(snip, instructions, PRINT_BUF_SZ), EGENERIC);
+
+    while (ZYAN_SUCCESS(ZydisDisassembleIntel(
+                    ZYDIS_MACHINE_MODE_LONG_64, 
+                    rt_address, 
+                    instructions + offset, 
+                    PRINT_BUF_SZ - offset, 
+                    &ins
+    ))) {        
+        CHECK_LIBC(fprintf(dst, "%016" PRIX64 "  %s\n", rt_address, ins.text));
+
+        offset += ins.info.length;    
+        rt_address += ins.info.length;
+        idx++;
+        
+        if (idx >= snip->count)
+            break;
+    }
+
+    return 0;
 }
