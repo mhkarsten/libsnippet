@@ -40,6 +40,7 @@ static const char *error_strings[] = {
 
 #define INT_ERR(f, errcode, err_ret, err_str, fmt, ...) HANDLE_ERROR(f, int, errcode, _ret < 0, err_ret, "%d", err_str, "")
 #define PTR_ERR(f, errcode, err_ret, err_str, fmt, ...) HANDLE_ERROR(f, void *, errcode, _ret == NULL, err_ret, "%p", error_strings[errcode], "")
+#define ZER_ERR(f, errcode, err_ret, err_str, fmt, ...) HANDLE_ERROR(f, int, errcode, _ret == 0, err_ret, "%d", err_str, "")
 
 // Handle errors from other libraries
 #define CHECK_LIBC(f)                       INT_ERR(f, 0, -errno, strerror(errno), "")
@@ -50,6 +51,7 @@ static const char *error_strings[] = {
 // Return ints as errors
 #define CHECK_INT(f, errcode)               INT_ERR(f, errcode, -errcode, error_strings[errcode], "")
 #define CHECK_PTR(f, errcode)               PTR_ERR(f, errcode, -errcode, error_strings[errcode], "")
+#define CHECK_ZERO(f, errcode)              ZER_ERR(f, errcode, -errcode, error_strings[errcode], "")
 
 // Return null ptrs as errors
 #define CHECK_INT_NULL(f, errcode)          INT_ERR(f, errcode, NULL, error_strings[errcode], "")
