@@ -26,5 +26,6 @@ extern const char *xfeature_strings[];
 extern const char *fuzz_method_strings[];
 extern const char *encode_method_strings[];
 extern const char *kvm_exit_code_strings[];
+extern const char *kvm_suberror_strings[];
 
 #endif
