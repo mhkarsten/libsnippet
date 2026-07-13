@@ -19,6 +19,9 @@
 #define RNG_SEED 1234           // TODO: Should the rng be statically seeded
 #define LENGTH(arr) sizeof(arr) / sizeof(arr[0])
 
+#define MMAP_PROT   PROT_READ | PROT_WRITE
+#define MMAP_OPT    MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE
+
 static inline long long int min(int64_t a, int64_t b)
 {
     return a < b ? a : b;
